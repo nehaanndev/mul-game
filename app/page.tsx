@@ -7,7 +7,7 @@ type Level = 1 | 2;
 const MIN_TABLE = 2;
 const MAX_TABLE = 5;
 const MIN_MULTIPLIER = 1;
-const MAX_MULTIPLIER = 12;
+const MAX_MULTIPLIER = 10;
 
 function getRandomInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -31,7 +31,7 @@ export default function HomePage() {
 
   // Update time limit when level changes
   useEffect(() => {
-    setTimeLimit(level === 1 ? 6 : 4);
+    setTimeLimit(level === 1 ? 10 : 6);
   }, [level]);
 
   // Generate a new question
@@ -88,47 +88,65 @@ export default function HomePage() {
     }, 900);
   }
 
-  function handleSubmit(e?: React.FormEvent) {
-    if (e) e.preventDefault();
-    if (!questionActive || answer.trim() === "") return;
+function handleSubmit(e?: React.FormEvent) {
+  if (e) e.preventDefault();
+  if (!questionActive || answer.trim() === "") return;
 
-    const userAnswer = Number(answer.trim());
-    const correct = a * b;
+  const userAnswer = Number(answer.trim());
+  const correct = a * b;
 
-    const now = Date.now();
-    const elapsedSec =
-      questionStartTime !== null ? (now - questionStartTime) / 1000 : timeLimit;
+  const now = Date.now();
+  const elapsedSec =
+    questionStartTime !== null ? (now - questionStartTime) / 1000 : timeLimit;
 
-    if (userAnswer === correct && elapsedSec <= timeLimit) {
-      // 👉 Score: always +1 point
-      const gained = 1;
-      setScore((s) => s + gained);
-      setStreak((s) => {
-        const newStreak = s + 1;
-        setBestStreak((bs) => Math.max(bs, newStreak));
-        return newStreak;
-      });
+  if (userAnswer === correct && elapsedSec <= timeLimit) {
+    // 👉 Score: always +1 point
+    const gained = 1;
+    setScore((s) => s + gained);
 
-      let streakBadge = "";
-      if (streak + 1 >= 10) streakBadge = " 🔥";
-      else if (streak + 1 >= 5) streakBadge = " ⭐";
+    let leveledUp = false;
+    let newStreakValue = streak + 1;
 
-      setMessage(
-        `✅ Correct! +${gained} point (answered in ${elapsedSec.toFixed(
-          1
-        )}s)${streakBadge}`
-      );
-    } else {
-      setMessage(`❌ ${a} × ${b} = ${correct}. Streak reset.`);
-      setStreak(0);
-    }
+    setStreak((s) => {
+      const newStreak = s + 1;
+      newStreakValue = newStreak;
 
-    setQuestionActive(false);
+      setBestStreak((bs) => Math.max(bs, newStreak));
 
-    setTimeout(() => {
-      newQuestion();
-    }, 700);
+      // 🔼 Level up: if on Level 1 and streak hits 20, advance to Level 2
+      if (level === 1 && newStreak >= 20) {
+        setLevel(2);
+        leveledUp = true;
+      }
+
+      return newStreak;
+    });
+
+    let streakBadge = "";
+    if (newStreakValue >= 10) streakBadge = " 🔥";
+    else if (newStreakValue >= 5) streakBadge = " ⭐";
+
+    const levelUpNote = leveledUp
+      ? " 🎉 Level up! You’re now on Level 2 (4s per question)."
+      : "";
+
+    setMessage(
+      `✅ Correct! +${gained} point (answered in ${elapsedSec.toFixed(
+        1
+      )}s)${streakBadge}${levelUpNote}`
+    );
+  } else {
+    setMessage(`❌ ${a} × ${b} = ${correct}. Streak reset.`);
+    setStreak(0);
   }
+
+  setQuestionActive(false);
+
+  setTimeout(() => {
+    newQuestion();
+  }, 700);
+}
+
 
   const timePercent = Math.max(0, Math.min(100, (timeLeft / timeLimit) * 100));
 
