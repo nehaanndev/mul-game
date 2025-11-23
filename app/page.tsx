@@ -1,13 +1,35 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
-type Level = 1 | 2;
+type Level = 1 | 2 | 3;
+
+type LevelInfo = {
+  id: Level;
+  tag: string;
+  description: string;
+  timeLimit: number;
+};
+
+const LEVELS: LevelInfo[] = [
+  { id: 1, tag: "Warm-up", description: "10s per question", timeLimit: 10 },
+  { id: 2, tag: "Quickfire", description: "8s per question", timeLimit: 8 },
+  { id: 3, tag: "Lightning", description: "6s per question", timeLimit: 6 },
+];
+
+const LEVEL_UP_STREAK = 20;
+const FINAL_LEVEL_ID = LEVELS[LEVELS.length - 1].id;
 
 const MIN_TABLE = 2;
 const MAX_TABLE = 5;
 const MIN_MULTIPLIER = 1;
 const MAX_MULTIPLIER = 10;
+
+const getLevelInfo = (id: Level) => LEVELS.find((info) => info.id === id)!;
+const getNextLevelInfo = (id: Level) => {
+  const index = LEVELS.findIndex((info) => info.id === id);
+  return LEVELS[index + 1];
+};
 
 function getRandomInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -15,11 +37,12 @@ function getRandomInt(min: number, max: number) {
 
 export default function HomePage() {
   const [level, setLevel] = useState<Level>(1);
-  const [timeLimit, setTimeLimit] = useState<number>(6); // seconds
+  const [maxUnlockedLevel, setMaxUnlockedLevel] = useState<Level>(1);
+  const [timeLimit, setTimeLimit] = useState<number>(getLevelInfo(1).timeLimit);
   const [a, setA] = useState<number>(2);
   const [b, setB] = useState<number>(2);
   const [answer, setAnswer] = useState<string>("");
-  const [questionId, setQuestionId] = useState<number>(0); // used to re-trigger timers
+  const [questionId, setQuestionId] = useState<number>(0);
   const [questionStartTime, setQuestionStartTime] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState<number>(timeLimit);
   const [questionActive, setQuestionActive] = useState<boolean>(false);
@@ -28,37 +51,43 @@ export default function HomePage() {
   const [streak, setStreak] = useState<number>(0);
   const [bestStreak, setBestStreak] = useState<number>(0);
   const [message, setMessage] = useState<string>("");
+  const [mastered, setMastered] = useState<boolean>(false);
 
-  // Update time limit when level changes
+  const currentLevelInfo = getLevelInfo(level);
+
   useEffect(() => {
-    setTimeLimit(level === 1 ? 10 : 6);
+    setTimeLimit(getLevelInfo(level).timeLimit);
   }, [level]);
 
-  // Generate a new question
-  function newQuestion() {
+  const newQuestion = useCallback(() => {
     const newA = getRandomInt(MIN_TABLE, MAX_TABLE);
     const newB = getRandomInt(MIN_MULTIPLIER, MAX_MULTIPLIER);
     setA(newA);
     setB(newB);
     setAnswer("");
-    setQuestionId((id) => id + 1);
-    setMessage("");
+    setQuestionId((prev) => prev + 1);
     setQuestionActive(true);
-  }
-
-  // Start first question on load
-  useEffect(() => {
-    newQuestion();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // When questionId or timeLimit changes, reset timer start
+  useEffect(() => {
+    newQuestion();
+  }, [newQuestion]);
+
   useEffect(() => {
     setQuestionStartTime(Date.now());
     setTimeLeft(timeLimit);
   }, [questionId, timeLimit]);
 
-  // Countdown / timeout effect
+  const handleTimeout = useCallback(() => {
+    if (!questionActive) return;
+    setQuestionActive(false);
+    setMessage(`⏰ Time's up! It was ${a} × ${b} = ${a * b}. Streak reset.`);
+    setStreak(0);
+    setTimeout(() => {
+      newQuestion();
+    }, 900);
+  }, [a, b, newQuestion, questionActive]);
+
   useEffect(() => {
     if (!questionActive || questionStartTime === null) return;
 
@@ -75,82 +104,93 @@ export default function HomePage() {
     }, 100);
 
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questionActive, questionStartTime, timeLimit, questionId]);
+  }, [questionActive, questionStartTime, timeLimit, questionId, handleTimeout]);
 
-  function handleTimeout() {
-    if (!questionActive) return; // avoid double-processing
-    setQuestionActive(false);
-    setMessage(`⏰ Time's up! It was ${a} × ${b} = ${a * b}. Streak reset.`);
-    setStreak(0);
-    setTimeout(() => {
-      newQuestion();
-    }, 900);
-  }
+  function handleSubmit(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!questionActive || answer.trim() === "") return;
 
-function handleSubmit(e?: React.FormEvent) {
-  if (e) e.preventDefault();
-  if (!questionActive || answer.trim() === "") return;
+    const userAnswer = Number(answer.trim());
+    const correct = a * b;
 
-  const userAnswer = Number(answer.trim());
-  const correct = a * b;
+    const now = Date.now();
+    const elapsedSec =
+      questionStartTime !== null ? (now - questionStartTime) / 1000 : timeLimit;
 
-  const now = Date.now();
-  const elapsedSec =
-    questionStartTime !== null ? (now - questionStartTime) / 1000 : timeLimit;
+    if (userAnswer === correct && elapsedSec <= timeLimit) {
+      const gained = 1;
+      setScore((s) => s + gained);
 
-  if (userAnswer === correct && elapsedSec <= timeLimit) {
-    // 👉 Score: always +1 point
-    const gained = 1;
-    setScore((s) => s + gained);
+      const nextLevelInfo = getNextLevelInfo(level);
+      let leveledUp = false;
+      let becameMaster = false;
+      let newStreakValue = streak + 1;
 
-    let leveledUp = false;
-    let newStreakValue = streak + 1;
+      setStreak((s) => {
+        const newStreak = s + 1;
+        newStreakValue = newStreak;
+        setBestStreak((bs) => Math.max(bs, newStreak));
 
-    setStreak((s) => {
-      const newStreak = s + 1;
-      newStreakValue = newStreak;
+        if (nextLevelInfo && newStreak >= LEVEL_UP_STREAK) {
+          setLevel(nextLevelInfo.id);
+          setMaxUnlockedLevel((prev) => Math.max(prev, nextLevelInfo.id) as Level);
+          leveledUp = true;
+        } else if (!nextLevelInfo && newStreak >= LEVEL_UP_STREAK) {
+          becameMaster = true;
+        }
 
-      setBestStreak((bs) => Math.max(bs, newStreak));
+        return newStreak;
+      });
 
-      // 🔼 Level up: if on Level 1 and streak hits 20, advance to Level 2
-      if (level === 1 && newStreak >= 20) {
-        setLevel(2);
-        leveledUp = true;
+      if (becameMaster) {
+        setMastered(true);
       }
 
-      return newStreak;
-    });
+      let streakBadge = "";
+      if (newStreakValue >= 10) streakBadge = " 🔥";
+      else if (newStreakValue >= 5) streakBadge = " ⭐";
 
-    let streakBadge = "";
-    if (newStreakValue >= 10) streakBadge = " 🔥";
-    else if (newStreakValue >= 5) streakBadge = " ⭐";
+      const levelUpNote = leveledUp
+        ? ` 🎉 Level up! You’re now on Level ${level + 1} (${nextLevelInfo?.description}).`
+        : "";
 
-    const levelUpNote = leveledUp
-      ? " 🎉 Level up! You’re now on Level 2 (4s per question)."
-      : "";
+      const masterNote = becameMaster
+        ? ` 🎓 Mastered Level ${FINAL_LEVEL_ID} (${currentLevelInfo.description})! Tap Reset to play again.`
+        : "";
 
-    setMessage(
-      `✅ Correct! +${gained} point (answered in ${elapsedSec.toFixed(
-        1
-      )}s)${streakBadge}${levelUpNote}`
-    );
-  } else {
-    setMessage(`❌ ${a} × ${b} = ${correct}. Streak reset.`);
-    setStreak(0);
+      setMessage(
+        `✅ Correct! +${gained} point (answered in ${elapsedSec.toFixed(
+          1
+        )}s)${streakBadge}${levelUpNote}${masterNote}`
+      );
+    } else {
+      setMessage(`❌ ${a} × ${b} = ${correct}. Streak reset.`);
+      setStreak(0);
+    }
+
+    setQuestionActive(false);
+    setTimeout(() => {
+      newQuestion();
+    }, 700);
   }
 
-  setQuestionActive(false);
-
-  setTimeout(() => {
+  const resetProgress = useCallback(() => {
+    setLevel(1);
+    setMaxUnlockedLevel(1);
+    setScore(0);
+    setStreak(0);
+    setMastered(false);
     newQuestion();
-  }, 700);
-}
+    setMessage("Progress reset — back to Level 1!");
+  }, [newQuestion]);
 
+  useEffect(() => {
+    if (level !== FINAL_LEVEL_ID && mastered) {
+      setMastered(false);
+    }
+  }, [level, mastered]);
 
   const timePercent = Math.max(0, Math.min(100, (timeLeft / timeLimit) * 100));
-
-  // Color tweak based on streak
   const streakColor =
     streak >= 10 ? "#16a34a" : streak >= 5 ? "#f97316" : "#0f172a";
 
@@ -207,11 +247,10 @@ function handleSubmit(e?: React.FormEvent) {
                 color: "#64748b",
               }}
             >
-              Tables <b>2–5</b> • Beat the timer • Grow your streak
+              Tables <b>2–5</b> • {currentLevelInfo.description} • Build a streak
             </p>
           </div>
 
-          {/* Level selector pill */}
           <div
             style={{
               padding: "6px 10px",
@@ -223,13 +262,11 @@ function handleSubmit(e?: React.FormEvent) {
               display: "flex",
               flexDirection: "column",
               alignItems: "flex-end",
-              minWidth: 100,
+              minWidth: 110,
             }}
           >
             <span style={{ fontWeight: 600 }}>Level {level}</span>
-            <span style={{ fontSize: "0.7rem" }}>
-              {level === 1 ? "6s per question" : "4s per question"}
-            </span>
+            <span style={{ fontSize: "0.7rem" }}>{currentLevelInfo.description}</span>
           </div>
         </header>
 
@@ -239,33 +276,52 @@ function handleSubmit(e?: React.FormEvent) {
             display: "flex",
             justifyContent: "center",
             gap: 10,
-            marginBottom: 20,
+            marginBottom: 18,
+            flexWrap: "wrap",
           }}
         >
-          {[1, 2].map((lvl) => {
-            const active = level === lvl;
+          {LEVELS.map((lvl) => {
+            const active = lvl.id === level;
+            const locked = lvl.id > maxUnlockedLevel;
             return (
               <button
-                key={lvl}
-                onClick={() => setLevel(lvl as Level)}
+                key={lvl.id}
+                onClick={() => !locked && setLevel(lvl.id)}
+                disabled={locked}
                 style={{
                   padding: "8px 16px",
                   borderRadius: 999,
                   border: active ? "none" : "1px solid #cbd5f5",
                   background: active
                     ? "linear-gradient(135deg,#4f46e5,#6366f1)"
+                    : locked
+                    ? "#f1f5f9"
                     : "#f8fafc",
                   color: active ? "white" : "#0f172a",
                   fontSize: "0.85rem",
-                  cursor: "pointer",
+                  cursor: locked ? "not-allowed" : "pointer",
                   fontWeight: 600,
-                  boxShadow: active
-                    ? "0 8px 16px rgba(79,70,229,0.4)"
-                    : "none",
+                  boxShadow: active ? "0 8px 16px rgba(79,70,229,0.4)" : "none",
+                  opacity: locked && !active ? 0.6 : 1,
                   transition: "transform 0.05s ease, box-shadow 0.1s ease",
+                  minWidth: 130,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 2,
+                  alignItems: "center",
                 }}
               >
-                Level {lvl} · {lvl === 1 ? "Chill" : "Turbo"}
+                <span>
+                  Level {lvl.id} · {lvl.tag}
+                </span>
+                <span
+                  style={{
+                    fontSize: "0.65rem",
+                    fontWeight: 500,
+                  }}
+                >
+                  {lvl.description} {locked ? "• Locked" : ""}
+                </span>
               </button>
             );
           })}
@@ -277,7 +333,7 @@ function handleSubmit(e?: React.FormEvent) {
             display: "flex",
             justifyContent: "space-between",
             gap: 8,
-            marginBottom: 16,
+            marginBottom: 14,
             fontSize: "0.9rem",
           }}
         >
@@ -402,7 +458,6 @@ function handleSubmit(e?: React.FormEvent) {
             {a} × {b} = ?
           </div>
 
-          {/* Timer bar */}
           <div
             style={{
               width: "100%",
@@ -457,7 +512,7 @@ function handleSubmit(e?: React.FormEvent) {
               fontSize: "1rem",
               outline: "none",
               boxShadow: "0 0 0 0 transparent",
-               color: "black",
+              color: "black",
             }}
           />
           <button
@@ -494,15 +549,50 @@ function handleSubmit(e?: React.FormEvent) {
         >
           {message}
         </div>
-        <div
-          style={{
-            fontSize: "0.75rem",
-            color: "#94a3b8",
-            textAlign: "center",
-          }}
-        >
-          Tip: press <b>Enter</b> to answer faster and keep the streak going.
-        </div>
+        {mastered && (
+          <div
+            style={{
+              marginBottom: 10,
+              fontSize: "0.85rem",
+              color: "#0f172a",
+              textAlign: "center",
+            }}
+          >
+            🎓 You’ve completed Level {FINAL_LEVEL_ID} — you are now a master!
+            <div
+              style={{
+                marginTop: 4,
+              }}
+            >
+              <button
+                type="button"
+                onClick={resetProgress}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 999,
+                  border: "1px solid #a855f7",
+                  background: "#7c3aed",
+                  color: "white",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Reset progress
+              </button>
+            </div>
+          </div>
+        )}
+        {!mastered && (
+          <div
+            style={{
+              fontSize: "0.75rem",
+              color: "#94a3b8",
+              textAlign: "center",
+            }}
+          >
+            Tip: press <b>Enter</b> to answer faster and keep the streak going.
+          </div>
+        )}
       </div>
     </main>
   );
